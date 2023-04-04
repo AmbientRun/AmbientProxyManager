@@ -15,7 +15,7 @@ async fn health_check() -> impl Responder {
 #[get("/proxy")]
 async fn get_proxy() -> impl Responder {
     // TODO: implement the logic
-    HttpResponse::Ok().body("35.228.233.193:7000")
+    HttpResponse::Ok().body("proxy-eu.ambient.run:7000")
 }
 
 pub fn get_subscriber<Sink>(
