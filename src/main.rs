@@ -1,24 +1,57 @@
+use std::fmt::Write;
 use std::net::{SocketAddr, TcpListener};
-
 use actix_web::{
-    dev::Server, get, http, web::Header, App, HttpMessage, HttpResponse, HttpServer, Responder,
+    dev::Server, get, http, web, App, HttpMessage, HttpResponse, HttpServer, Responder, Result,
 };
+use parking_lot::Mutex;
+use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
+use prometheus_client::registry::Registry;
 use tracing::{subscriber::set_global_default, Subscriber};
 use tracing_actix_web::TracingLogger;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
-use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, EnvFilter, Registry};
 
-#[get("/_ah/health")]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
+pub enum Method {
+    Get,
+    Post,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct MethodLabels {
+    pub method: Method,
+    pub country: String,
+}
+
+pub struct Metrics {
+    requests: Family<MethodLabels, Counter>,
+}
+
+impl Metrics {
+    pub fn inc_requests(&self, method: Method, country: String) {
+        self.requests.get_or_create(&MethodLabels { method, country }).inc();
+    }
+}
+
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("ok")
 }
 
-struct GAECountry([u8; 2]);
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct GAECountry([u8; 2]);
 
 impl ToString for GAECountry {
     fn to_string(&self) -> String {
         String::from_utf8_lossy(&self.0).to_string()
+    }
+}
+
+impl EncodeLabelValue for GAECountry {
+    fn encode(&self, encoder: &mut prometheus_client::encoding::LabelValueEncoder) -> std::result::Result<(), std::fmt::Error> {
+        write!(encoder, "{}", self.to_string())
     }
 }
 
@@ -52,11 +85,14 @@ const EU_PROXY: &str = "proxy-eu.ambient.run:7000";
 const US_PROXY: &str = "proxy-us.ambient.run:7000";
 
 #[get("/proxy")]
-async fn get_proxy(country: Option<Header<GAECountry>>) -> impl Responder {
+async fn get_proxy(country: Option<web::Header<GAECountry>>, metrics: web::Data<Metrics>) -> impl Responder {
     // handle missing country header
     let country = country
-        .map(|Header(country)| country.0)
+        .map(|web::Header(country)| country.0)
         .unwrap_or([b'Z', b'Z']);
+
+    // increment metrics
+    metrics.inc_requests(Method::Get, String::from_utf8_lossy(&country).to_string());
 
     // choose proxy based on country
     let proxy = match &country {
@@ -80,14 +116,30 @@ async fn get_proxy(country: Option<Header<GAECountry>>) -> impl Responder {
     HttpResponse::Ok().body(proxy)
 }
 
+pub struct AppState {
+    pub registry: Registry,
+}
+
+#[get("/metrics")]
+async fn metrics_handler(state: web::Data<Mutex<AppState>>) -> Result<HttpResponse> {
+    let state = state.lock();
+    let mut body = String::new();
+    encode(&mut body, &state.registry).unwrap();
+    Ok(HttpResponse::Ok()
+        .content_type("application/openmetrics-text; version=1.0.0; charset=utf-8")
+        .body(body))
+}
+
 pub fn get_subscriber<Sink>(
     name: String,
     env_filter: String,
     sink: Sink,
 ) -> impl Subscriber + Send + Sync
 where
-    Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+    Sink: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
+    use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(env_filter));
     let formatting_layer = BunyanFormattingLayer::new(name, sink);
@@ -103,11 +155,26 @@ pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
 }
 
 pub fn run(listener: TcpListener) -> std::io::Result<Server> {
+    let metrics = web::Data::new(Metrics {
+        requests: Family::default(),
+    });
+    let mut state = AppState {
+        registry: Registry::default(),
+    };
+    state
+        .registry
+        .register("requests", "Count of requests", metrics.requests.clone());
+    let state = web::Data::new(Mutex::new(state));
+
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
-            .service(health_check)
+            .app_data(metrics.clone())
+            .app_data(state.clone())
+            .service(web::resource("/_ah/health").route(web::get().to(health_check)))
+            .service(web::resource("/health").route(web::get().to(health_check)))
             .service(get_proxy)
+            .service(metrics_handler)
     })
     .listen(listener)?
     .run();
