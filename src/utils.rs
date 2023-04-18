@@ -1,4 +1,4 @@
-use std::{path::Path, net::IpAddr};
+use std::{net::IpAddr, path::Path};
 
 pub struct IPReader {
     reader: maxminddb::Reader<Vec<u8>>,
@@ -26,12 +26,21 @@ impl IPReader {
         Ok(Self { reader })
     }
 
-    pub fn lookup(&self, ip: IpAddr) -> Result<maxminddb::geoip2::Country, maxminddb::MaxMindDBError> {
+    pub fn lookup(
+        &self,
+        ip: IpAddr,
+    ) -> Result<maxminddb::geoip2::Country, maxminddb::MaxMindDBError> {
         self.reader.lookup(ip)
     }
 
-    pub fn lookup_continent_and_country_code(&self, ip: IpAddr) -> Result<(Option<&str>, Option<&str>), maxminddb::MaxMindDBError> {
+    pub fn lookup_continent_and_country_code(
+        &self,
+        ip: IpAddr,
+    ) -> Result<(Option<&str>, Option<&str>), maxminddb::MaxMindDBError> {
         let country = self.lookup(ip)?;
-        Ok((country.continent.and_then(|c| c.code), country.country.and_then(|c| c.iso_code)))
+        Ok((
+            country.continent.and_then(|c| c.code),
+            country.country.and_then(|c| c.iso_code),
+        ))
     }
 }

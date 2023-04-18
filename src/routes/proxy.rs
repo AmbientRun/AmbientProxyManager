@@ -1,9 +1,11 @@
-use std::{sync::Arc, net::SocketAddr};
+use std::{net::SocketAddr, sync::Arc};
 
-use axum::{extract::{State, ConnectInfo, TypedHeader}, headers::UserAgent};
+use axum::{
+    extract::{ConnectInfo, State, TypedHeader},
+    headers::UserAgent,
+};
 
 use crate::app::AppState;
-
 
 const EU_PROXY: &str = "proxy-eu.ambient.run:7000";
 const US_PROXY: &str = "proxy-us.ambient.run:7000";
@@ -16,11 +18,15 @@ pub async fn get_proxy(
 ) -> &'static str {
     // FIXME: convert this into a middleware maybe
     // resolve continent and country
-    let (continent, country) = app_state.ip_reader.as_ref().map(|ip_reader| {
-        ip_reader
-            .lookup_continent_and_country_code(addr.ip())
-            .unwrap_or_default()
-    }).unwrap_or_default();
+    let (continent, country) = app_state
+        .ip_reader
+        .as_ref()
+        .map(|ip_reader| {
+            ip_reader
+                .lookup_continent_and_country_code(addr.ip())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
     let continent = continent.unwrap_or("ZZ");
     let country = country.unwrap_or("ZZ");
 
@@ -40,7 +46,9 @@ pub async fn get_proxy(
     );
 
     // increment metrics
-    app_state.metrics.inc_proxy_requests(country.to_string(), ambient_version.to_string());
+    app_state
+        .metrics
+        .inc_proxy_requests(country.to_string(), ambient_version.to_string());
 
     // choose proxy based on country
     let proxy = match continent {
