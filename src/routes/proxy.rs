@@ -51,10 +51,8 @@ pub async fn get_proxy(
         .inc_proxy_requests(country.to_string(), ambient_version.to_string());
 
     // choose proxy based on country
-    let proxy = match continent {
+    match continent {
         "NA" | "SA" => US_PROXY,
         _ => EU_PROXY,
-    };
-
-    proxy
+    }
 }
