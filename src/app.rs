@@ -5,7 +5,7 @@ use std::{
 
 use axum::{http::Method, routing::get, Router};
 use prometheus_client::registry::Registry;
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
     routes::{metrics::get_metrics, proxy::get_proxy},
@@ -32,7 +32,12 @@ impl Default for AppState {
 }
 
 pub async fn run(listener: TcpListener) -> anyhow::Result<()> {
-    tracing::debug!("Starting HTTP interface on: {:?}", listener.local_addr());
+    tracing::debug!(
+        "Starting HTTP interface on: {:?}",
+        listener
+            .local_addr()
+            .expect("Listener should have a local address")
+    );
 
     let state = Arc::new(AppState::default());
 
@@ -47,7 +52,8 @@ pub async fn run(listener: TcpListener) -> anyhow::Result<()> {
                 .allow_origin(tower_http::cors::Any)
                 .allow_methods(vec![Method::GET])
                 .allow_headers(tower_http::cors::Any),
-        );
+        )
+        .layer(TraceLayer::new_for_http());
 
     axum::Server::from_tcp(listener)
         .unwrap()

@@ -54,11 +54,19 @@ where
     LogTracer::init().expect("Failed to set logger");
 
     let registry = Registry::default().with(env_filter);
-    if std::env::var("LOG_FORMAT").map(|v| v.to_lowercase()) == Ok("bunyan".to_string()) {
-        let formatting_layer = BunyanFormattingLayer::new(name, sink);
-        set_global_default(registry.with(JsonStorageLayer).with(formatting_layer))
-    } else {
-        set_global_default(registry.with(tracing_stackdriver::layer().with_writer(sink)))
+    match std::env::var("LOG_FORMAT")
+        .map(|v| v.to_lowercase())
+        .unwrap_or("stackdriver".to_string())
+        .as_str()
+    {
+        "bunyan" => {
+            let formatting_layer = BunyanFormattingLayer::new(name, sink);
+            set_global_default(registry.with(JsonStorageLayer).with(formatting_layer))
+        }
+        "stackdriver" => {
+            set_global_default(registry.with(tracing_stackdriver::layer().with_writer(sink)))
+        }
+        _ => set_global_default(registry.with(tracing_subscriber::fmt::layer().with_writer(sink))),
     }
     .expect("Failed to set subscriber");
 }
